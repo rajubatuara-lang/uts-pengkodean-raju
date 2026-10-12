@@ -1,0 +1,172 @@
+# ANALISIS SOAL 1
+## Desain Arsitektur Data, Normalisasi, dan Penegakan Asas Berpasangan
+
+### 1. Tujuan Perancangan Database
+
+Perancangan database General Ledger bertujuan untuk membangun sistem pencatatan jurnal akuntansi yang terstruktur, konsisten, dan dapat dipertanggungjawabkan. Sistem harus mampu menjaga integritas data serta mengurangi risiko terjadinya jurnal yang tidak valid akibat hanya mengandalkan validasi pada antarmuka pengguna (*frontend validation*).
+
+Untuk mengatasi masalah tersebut, validasi diterapkan pada tingkat database melalui penggunaan *Primary Key*, *Foreign Key*, dan *CHECK constraint*. Dengan demikian, database memiliki aturan integritas yang dapat diterapkan meskipun data dimasukkan melalui jalur selain antarmuka aplikasi.
+
+### 2. Analisis Struktur Tabel
+
+Database dirancang menggunakan tiga tabel utama, yaitu `chart_of_accounts`, `journal_headers`, dan `journal_lines`.
+
+#### 2.1 Tabel chart_of_accounts
+
+Tabel `chart_of_accounts` digunakan untuk menyimpan daftar akun yang digunakan dalam pencatatan transaksi perusahaan.
+
+Kolom-kolom utamanya meliputi:
+
+- `account_id`: identitas unik setiap akun dan berfungsi sebagai *Primary Key*.
+- `account_code`: kode akun yang digunakan untuk membedakan setiap akun.
+- `account_name`: nama akun, misalnya Kas, Piutang Usaha, dan Beban Listrik.
+- `normal_balance`: menunjukkan saldo normal akun, yaitu debit atau kredit.
+- `report_classification`: menunjukkan klasifikasi akun dalam laporan keuangan.
+
+Tabel ini menjadi referensi bagi pencatatan jurnal sehingga setiap baris jurnal dapat dihubungkan dengan akun yang valid.
+
+#### 2.2 Tabel journal_headers
+
+Tabel `journal_headers` digunakan untuk menyimpan informasi umum dari suatu transaksi jurnal.
+
+Kolom-kolom utamanya meliputi:
+
+- `journal_id`: identitas unik jurnal dan berfungsi sebagai *Primary Key*.
+- `transaction_date`: tanggal transaksi.
+- `reference_no`: nomor referensi atau bukti transaksi.
+- `description`: keterangan mengenai transaksi.
+- `posting_status`: status jurnal, misalnya `DRAFT` atau `POSTED`.
+
+Pemisahan informasi umum ke dalam tabel header memungkinkan satu transaksi memiliki beberapa baris jurnal tanpa harus mengulang informasi tanggal, nomor referensi, dan deskripsi pada setiap baris.
+
+#### 2.3 Tabel journal_lines
+
+Tabel `journal_lines` digunakan untuk menyimpan rincian akun dan nominal debit maupun kredit dari suatu jurnal.
+
+Kolom-kolom utamanya meliputi:
+
+- `line_id`: identitas unik setiap baris jurnal dan berfungsi sebagai *Primary Key*.
+- `journal_id`: *Foreign Key* yang menghubungkan baris jurnal dengan tabel `journal_headers`.
+- `account_id`: *Foreign Key* yang menghubungkan baris jurnal dengan tabel `chart_of_accounts`.
+- `debit`: nominal debit pada baris jurnal.
+- `credit`: nominal kredit pada baris jurnal.
+
+Tabel ini memungkinkan satu jurnal memiliki beberapa baris pencatatan yang mewakili akun-akun yang terlibat dalam transaksi.
+
+### 3. Analisis Hubungan Antarentitas (ERD)
+
+Hubungan antarentitas dalam database dirancang sebagai berikut:
+
+1. Satu data `journal_headers` dapat memiliki banyak data `journal_lines`, sehingga hubungan keduanya adalah satu-ke-banyak (*one-to-many*).
+2. Satu data `chart_of_accounts` dapat digunakan pada banyak data `journal_lines`, sehingga hubungan keduanya juga satu-ke-banyak (*one-to-many*).
+
+Secara sederhana, hubungan tersebut dapat digambarkan sebagai berikut:
+
+```text
+chart_of_accounts
+        |
+        | 1
+        |
+        | N
+   journal_lines
+        |
+        | N
+        |
+        | 1
+ journal_headers
+```
+
+Pada implementasi database, `journal_lines.journal_id` mengacu pada `journal_headers.journal_id`, sedangkan `journal_lines.account_id` mengacu pada `chart_of_accounts.account_id`.
+
+Hubungan tersebut memastikan bahwa setiap baris jurnal merujuk pada jurnal induk dan akun yang terdaftar di database.
+
+### 4. Analisis Integritas Database dan Constraints
+
+Integritas database diperlukan untuk memastikan data yang disimpan memenuhi aturan struktur dan pencatatan yang telah ditentukan.
+
+#### 4.1 Primary Key
+
+*Primary Key* digunakan untuk mengidentifikasi setiap baris data secara unik. Pada rancangan ini, setiap tabel memiliki *Primary Key* masing-masing, yaitu `account_id`, `journal_id`, dan `line_id`.
+
+Penggunaan *Primary Key* mencegah identitas data menjadi ambigu dan memudahkan hubungan antarentitas.
+
+#### 4.2 Foreign Key
+
+*Foreign Key* digunakan untuk menjaga hubungan antara tabel yang saling berkaitan.
+
+Pada tabel `journal_lines`, kolom `journal_id` mengacu pada tabel `journal_headers`, sedangkan `account_id` mengacu pada tabel `chart_of_accounts`.
+
+Dengan demikian, baris jurnal tidak dapat merujuk pada jurnal induk atau akun yang tidak tersedia dalam tabel referensi.
+
+#### 4.3 ON DELETE RESTRICT
+
+Klausa `ON DELETE RESTRICT` digunakan untuk mencegah penghapusan data induk yang masih digunakan oleh data lain.
+
+Sebagai contoh, akun yang masih direferensikan oleh baris jurnal tidak dapat dihapus secara langsung. Aturan ini membantu menjaga konsistensi hubungan data dan mengurangi risiko hilangnya referensi transaksi.
+
+#### 4.4 CHECK Constraint
+
+Pada tabel `journal_lines`, digunakan beberapa aturan validasi nominal:
+
+- `CHECK (debit >= 0)` memastikan nominal debit tidak negatif.
+- `CHECK (credit >= 0)` memastikan nominal kredit tidak negatif.
+- `CHECK (debit > 0 OR credit > 0)` memastikan debit dan kredit tidak sama-sama bernilai nol pada satu baris jurnal.
+
+Ketiga aturan tersebut merupakan validasi pada tingkat baris. Namun, aturan tersebut belum menjamin bahwa jumlah seluruh debit sama dengan jumlah seluruh kredit dalam satu jurnal.
+
+Oleh karena itu, keseimbangan jurnal perlu diperiksa pada tingkat transaksi jurnal secara keseluruhan, terutama sebelum jurnal diubah menjadi berstatus `POSTED`. Pemeriksaan tersebut dapat diterapkan melalui fungsi atau trigger database yang dirancang untuk memvalidasi total debit dan kredit.
+
+### 5. Analisis Normalisasi Bentuk Normal Ketiga (3NF)
+
+Normalisasi merupakan proses pengorganisasian data untuk mengurangi pengulangan dan mencegah anomali dalam penyimpanan maupun perubahan data.
+
+Pemisahan tabel `chart_of_accounts`, `journal_headers`, dan `journal_lines` mendukung rancangan database yang lebih terstruktur.
+
+Beberapa manfaat pemisahan tersebut adalah:
+
+1. Informasi akun disimpan pada tabel `chart_of_accounts`, sehingga nama dan kode akun tidak perlu didefinisikan ulang pada setiap baris jurnal.
+2. Informasi umum transaksi disimpan pada `journal_headers`, sehingga tanggal, nomor referensi, dan deskripsi tidak perlu diulang pada setiap baris jurnal.
+3. Informasi nominal debit dan kredit disimpan pada `journal_lines`, sehingga rincian transaksi dapat terdiri dari beberapa akun.
+4. Perubahan informasi referensi dapat dikelola secara terpusat pada tabel yang sesuai.
+
+Bentuk normal ketiga (3NF) mensyaratkan bahwa tabel telah memenuhi bentuk normal kedua dan tidak memiliki ketergantungan transitif atribut nonkunci terhadap *Primary Key*. Dengan kata lain, atribut nonkunci harus bergantung pada kunci, keseluruhan kunci, dan tidak bergantung secara transitif pada atribut nonkunci lainnya.
+
+Pemisahan tabel pada rancangan ini mendukung tujuan 3NF karena setiap tabel memiliki fungsi dan kelompok atribut yang berbeda. Namun, kepatuhan formal terhadap 3NF tetap harus dinilai berdasarkan ketergantungan fungsional atribut pada setiap tabel, bukan hanya berdasarkan jumlah tabel yang digunakan.
+
+### 6. Analisis Audit Trail dan Keamanan Finansial
+
+*Audit trail* merupakan jejak yang memungkinkan transaksi dan aktivitas terkait ditelusuri untuk keperluan pemeriksaan.
+
+Pemisahan header dan detail jurnal membantu proses audit karena auditor dapat mengidentifikasi informasi umum suatu transaksi melalui `journal_headers` dan menelusuri seluruh akun beserta nominalnya melalui `journal_lines`.
+
+Sebagai contoh, ketika auditor memeriksa transaksi pembayaran listrik, auditor dapat menelusuri nomor bukti, tanggal, dan deskripsi transaksi, kemudian memeriksa akun yang didebit serta akun yang dikredit.
+
+Meskipun demikian, pemisahan tabel saja belum cukup untuk membentuk audit trail yang lengkap. Sistem sebaiknya dilengkapi dengan pencatatan identitas pengguna, waktu pembuatan, riwayat perubahan, status posting, serta pembatasan akses terhadap transaksi yang telah diposting.
+
+Penerapan kontrol tersebut membantu meningkatkan keterlacakan transaksi dan mengurangi risiko perubahan data tanpa otorisasi.
+
+### 7. Contoh Penerapan Asas Berpasangan (Double-Entry)
+
+Sebagai contoh, perusahaan melakukan pembayaran biaya listrik secara tunai sebesar Rp1.000.000.
+
+Pencatatan jurnalnya adalah sebagai berikut:
+
+| Akun | Debit | Kredit |
+|---|---:|---:|
+| Beban Listrik | Rp1.000.000 | Rp0 |
+| Kas | Rp0 | Rp1.000.000 |
+| **Total** | **Rp1.000.000** | **Rp1.000.000** |
+
+Transaksi tersebut dicatat dalam satu baris header dan dua baris detail jurnal.
+
+Prinsip pencatatan berpasangan mengharuskan total debit sama dengan total kredit untuk setiap jurnal yang lengkap dan seimbang. Dalam contoh ini, total debit sebesar Rp1.000.000 sama dengan total kredit sebesar Rp1.000.000.
+
+Database harus memastikan bahwa baris jurnal menggunakan akun yang valid dan nominalnya memenuhi constraint. Selain itu, proses posting harus memvalidasi keseimbangan seluruh baris jurnal sebelum transaksi disahkan.
+
+### 8. Kesimpulan
+
+Rancangan database General Ledger menggunakan tiga tabel utama, yaitu `chart_of_accounts`, `journal_headers`, dan `journal_lines`, untuk memisahkan data referensi akun, informasi umum transaksi, dan rincian jurnal.
+
+Penerapan *Primary Key*, *Foreign Key*, `ON DELETE RESTRICT`, dan `CHECK constraint` membantu menjaga integritas struktur serta nominal data. Pemisahan header dan detail juga mendukung normalisasi dan memudahkan penelusuran transaksi.
+
+Namun, integritas nominal pada setiap baris tidak secara otomatis menjamin keseimbangan total debit dan kredit. Oleh karena itu, sistem perlu memiliki validasi tambahan sebelum posting, serta mekanisme audit trail dan pembatasan akses agar pencatatan akuntansi menjadi lebih konsisten, terlacak, dan dapat dipertanggungjawabkan.
