@@ -6,6 +6,7 @@
     <title>Sistem Voucher Entri Transaksi Kas Keluar</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -79,7 +80,7 @@
                 <p class="text-gray-500 mt-1">Entri data transaksi pengeluaran kas atau bank.</p>
             </div>
             <div class="text-sm text-gray-500 bg-white px-3 py-2 rounded-md shadow-sm border border-gray-200">
-                <i class="fas fa-info-circle text-secondary mr-1"></i> Mode Purwarupa (UI/UX)
+                <i class="fas fa-database text-secondary mr-1"></i> Terhubung ke Supabase
             </div>
         </div>
 
@@ -196,13 +197,19 @@
 
         <footer class="mt-8 text-center text-sm text-gray-500 pb-8">
             <p>&copy; 2026 Sistem Informasi Akuntansi. Purwarupa UI/UX.</p>
-            <p class="mt-1 text-xs">Aplikasi ini tidak terhubung ke database. Data hanya diproses di sisi klien.</p>
+            <p class="mt-1 text-xs">Data voucher disimpan ke Supabase.</p>
         </footer>
     </main>
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            
+
+            // ── Supabase Client ──────────────────────────────────────────
+            const SUPABASE_URL = 'https://vczieqxjyhggwylxcgkk.supabase.co';
+            const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZjemllcXhqeWhnZ3d5bHhjZ2trIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MjA2ODcsImV4cCI6MjEwNzM5NjY4N30.lBELkJKGb1v9QHNJKBgJySuKGOlLcMHQFJD9ZhCnc3Y';
+            const { createClient } = supabase;
+            const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            // ─────────────────────────────────────────────────────────────
             // Data Akun (Mockup Chart of Accounts)
             const chartOfAccounts = [
                 { id: '', name: '-- Pilih Akun --' },
@@ -463,29 +470,77 @@
                 showNotification('Contoh jurnal pembayaran sewa gedung berhasil dimuat.', 'success');
             });
 
-            // Handle Submit
-            voucherForm.addEventListener('submit', (e) => {
+            // Handle Submit — simpan ke Supabase
+            voucherForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
-                
-                if (!submitBtn.disabled) {
-                    // Simulate processing
-                    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memproses...';
-                    submitBtn.disabled = true;
 
-                    setTimeout(() => {
-                        // Gather data for demonstration
-                        const voucherNo = document.getElementById('voucherNo').value;
-                        const total = formatNumber(totalDebit);
-                        
-                        showNotification(`Voucher ${voucherNo} dengan total Rp ${total} berhasil disimpan (Simulasi).`, 'success');
-                        
-                        // Reset button
-                        submitBtn.innerHTML = '<i class="fas fa-save mr-2"></i> Simpan Voucher';
-                        submitBtn.disabled = false;
-                        
-                        // Optionally reset form here
-                        // resetBtn.click();
-                    }, 1000);
+                if (submitBtn.disabled) return;
+
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Menyimpan...';
+                submitBtn.disabled = true;
+
+                const voucherNo   = document.getElementById('voucherNo').value.trim();
+                const transDate   = document.getElementById('transDate').value;
+                const description = document.getElementById('description').value.trim();
+
+                // Kumpulkan baris jurnal
+                const lines = [];
+                journalBody.querySelectorAll('tr').forEach(row => {
+                    const select = row.querySelector('.account-select');
+                    const accountId   = select.value;
+                    const accountName = select.options[select.selectedIndex].text.trim();
+                    const debit  = parseNumber(row.querySelector('.debit-input').value);
+                    const credit = parseNumber(row.querySelector('.credit-input').value);
+                    lines.push({ account_id: accountId, account_name: accountName, debit, credit });
+                });
+
+                try {
+                    // 1. Insert header
+                    const { data: headerData, error: headerError } = await db
+                        .from('voucher_headers')
+                        .insert({
+                            voucher_no:   voucherNo,
+                            trans_date:   transDate,
+                            description:  description,
+                            total_amount: totalDebit
+                        })
+                        .select('id')
+                        .single();
+
+                    if (headerError) throw headerError;
+
+                    const voucherId = headerData.id;
+
+                    // 2. Insert baris jurnal
+                    const lineRows = lines.map(l => ({ voucher_id: voucherId, ...l }));
+                    const { error: linesError } = await db
+                        .from('voucher_lines')
+                        .insert(lineRows);
+
+                    if (linesError) throw linesError;
+
+                    showNotification(
+                        `Voucher <strong>${voucherNo}</strong> dengan total Rp ${formatNumber(totalDebit)} berhasil disimpan ke database.`,
+                        'success'
+                    );
+
+                    // Reset form setelah berhasil simpan
+                    document.getElementById('description').value = '';
+                    journalBody.innerHTML = '';
+                    rowCount = 0;
+                    addJournalRow();
+                    calculateTotals();
+
+                } catch (err) {
+                    console.error('Supabase error:', err);
+                    const msg = err.message || 'Terjadi kesalahan saat menyimpan data.';
+                    showNotification(`Gagal menyimpan: ${msg}`, 'error');
+                } finally {
+                    submitBtn.innerHTML = '<i class="fas fa-save mr-2"></i> Simpan Voucher';
+                    validateForm(
+                        journalBody.querySelectorAll('tr').length > 0,
+                        true
+                    );
                 }
             });
 
