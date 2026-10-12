@@ -1,0 +1,89 @@
+SOAL 3: Integrasi Purwarupa Web Full-Stack & Orkestrasi AI Tools [Bobot: 35%]
+	Pengembangan purwarupa modul Voucher Entri Transaksi Kas Keluar berbasis Python Streamlit dan backend FastAPI terintegrasi aturan zero-discrepancy serta immutability.
+
+3.1 Purwarupa UI & Verifikasi PSAK
+a. Prompt AI Terpandu (Dokumentasi Prompting)
+Prompt AI yang digunakan untuk mengonstruksi UI Streamlit:
+Buat purwarupa website Sistem Voucher Entri Transaksi Kas Keluar untuk perusahaan. Gunakan HTML, CSS, dan JavaScript dengan tampilan profesional, bersih, responsif, dan cocok untuk sistem akuntansi.
+Fitur yang wajib tersedia:
+1.	Form nomor voucher, tanggal transaksi, dan keterangan.
+2.	Tabel jurnal dinamis dengan kolom akun, debit, dan kredit.
+3.	Tombol tambah baris dan hapus baris jurnal.
+4.	Kalkulasi total debit dan total kredit secara otomatis ketika pengguna mengubah nominal.
+5.	Indikator status Balanced jika total debit sama dengan total kredit, dan Unbalanced jika berbeda.
+6.	Tombol Submit hanya aktif jika data wajib terisi, nominal valid, terdapat baris jurnal, dan total debit sama dengan total kredit.
+7.	Pisahkan kode menjadi index.html, style.css, dan app.js.
+8.	Tambahkan contoh jurnal pembayaran kas keluar.
+9.	Berikan validasi yang jelas dan mudah dipahami pengguna.
+Jangan mengklaim bahwa aplikasi sudah terhubung ke database jika integrasi backend belum dibuat. Tampilkan kode lengkap untuk ketiga file tersebut.
+
+b. Kode Purwarupa Aplikasi Web 
+https://github.com/rajubatuara-lang/uts-pengkodean-raju/blob/main/soal_3/index.html
+
+c. Ringkasan Verifikasi Aturan Bisnis PSAK (Pengakuan Kas & Setara Kas)
+1. PSAK 2 (Laporan Arus Kas): Setiap pengeluaran kas wajib diakui bersamaan dengan pengakuan beban atau pelunasan kewajiban secara simetris (double-entry principle). Pengendalian real-time pada UI memutakhirkan posisi arus kas secara tepat waktu.
+2. Pengendalian Interne & Auditability: Sistem melarang pengurangan kas sepihak tanpa adanya akun tandingan yang terverifikasi, menjamin bahwa arus kas keluar memiliki otorisasi dan keterlacakan penuh (auditability).
+3.2 Mekanisme Jejak Audit & Immutability
+a. Backend Function (FastAPI - Jurnal Pembalik & SHA-256 Checksum)
+-- ============================================================
+-- Schema: Voucher Kas Keluar
+-- Jalankan script ini di Supabase SQL Editor
+-- ============================================================
+
+-- Tabel header voucher
+CREATE TABLE IF NOT EXISTS voucher_headers (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    voucher_no  VARCHAR(50)  NOT NULL UNIQUE,
+    trans_date  DATE         NOT NULL,
+    description TEXT         NOT NULL,
+    total_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- Tabel baris jurnal (detail)
+CREATE TABLE IF NOT EXISTS voucher_lines (
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    voucher_id  BIGINT       NOT NULL
+                    REFERENCES voucher_headers(id)
+                    ON DELETE CASCADE,
+    account_id  VARCHAR(20)  NOT NULL,
+    account_name VARCHAR(100) NOT NULL,
+    debit       NUMERIC(15,2) NOT NULL DEFAULT 0 CHECK (debit >= 0),
+    credit      NUMERIC(15,2) NOT NULL DEFAULT 0 CHECK (credit >= 0),
+    CHECK (debit > 0 OR credit > 0)
+);
+
+-- Aktifkan Row Level Security
+ALTER TABLE voucher_headers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE voucher_lines   ENABLE ROW LEVEL SECURITY;
+
+-- Policy: izinkan semua operasi dari anon key (untuk purwarupa)
+CREATE POLICY "Allow all for anon" ON voucher_headers
+    FOR ALL TO anon USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow all for anon" ON voucher_lines
+    FOR ALL TO anon USING (true) WITH CHECK (true);
+
+
+
+b. Database Immutability Trigger (PostgreSQL)
+-- Trigger Function Mencegah Pengubahan / Penghapusan Data POSTED
+CREATE OR REPLACE FUNCTION fn_prevent_posted_modification()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF OLD.posting_status = 'POSTED' THEN
+        RAISE EXCEPTION 'Akses Ditolak: Transaksi berstatus POSTED tidak boleh diubah (UPDATE) atau dihapus (DELETE)! Gunakan Jurnal Pembalik (Reversing Entry).';
+    END IF;
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_protect_posted_headers
+BEFORE UPDATE OR DELETE ON journal_headers
+FOR EACH ROW
+EXECUTE FUNCTION fn_prevent_posted_modification();
+
+c. Parameter Integritas Data Finansial
+•	created_by: Menandai identitas pengguna/sistem yang menginput transaksi untuk penegakan akuntabilitas personal.
+•	created_at: Stempel waktu terpusat dari server (server timestamp) untuk menjamin urutan kronologis kejadian.
+•	hash_checksum: Nilai enkripsi SHA-256 yang memadukan parameter utama transaksi. Jika terjadi manipulasi langsung pada basis data, hash tidak akan cocok sehingga kecurangan terdeteksi seketika.

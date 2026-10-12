@@ -1,0 +1,125 @@
+SOAL 2: Otomasi Bisnis, Stored Procedures, & Database Trigger Persediaan [Bobot: 40%]
+	Implementasi fungsi otomasi bisnis untuk pengelolaan persediaan sistem perpetual di PT Diponegoro Logistik Utama untuk mencegah selisih stok opname dan menangani akses bersamaan (concurrency).
+
+2.1 Otomatisasi Mutasi via Database Trigger
+	Berikut adalah kode lengkap PostgreSQL Trigger Function dan Trigger yang secara otomatis mengupdate stok dan membatalkan transaksi jika persediaan tidak mencukupi:
+-- 1. Fungsi Trigger Utama
+CREATE OR REPLACE FUNCTION trg_update_stock_and_journal()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_stock INT;
+BEGIN
+    IF NEW.qty = 0 THEN
+        RAISE EXCEPTION 'Kuantitas tidak boleh nol';
+    END IF;
+
+    SELECT stock_qty
+    INTO v_stock
+    FROM inventory_items
+    WHERE item_id = NEW.item_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Barang tidak ditemukan';
+    END IF;
+
+    IF NEW.trx_type = 'PURCHASE' THEN
+
+        IF NEW.qty < 0 THEN
+            RAISE EXCEPTION
+                'Kuantitas pembelian harus positif';
+        END IF;
+
+        UPDATE inventory_items
+        SET stock_qty = stock_qty + NEW.qty
+        WHERE item_id = NEW.item_id;
+
+    ELSIF NEW.trx_type = 'SALE' THEN
+
+        IF NEW.qty < 0 THEN
+            RAISE EXCEPTION
+                'Kuantitas penjualan harus positif';
+        END IF;
+
+        IF v_stock < NEW.qty THEN
+            RAISE EXCEPTION
+                'Stok tidak mencukupi';
+        END IF;
+
+        UPDATE inventory_items
+        SET stock_qty = stock_qty - NEW.qty
+        WHERE item_id = NEW.item_id;
+
+    ELSIF NEW.trx_type = 'ADJUSTMENT' THEN
+
+        UPDATE inventory_items
+        SET stock_qty = stock_qty + NEW.qty
+        WHERE item_id = NEW.item_id
+          AND stock_qty + NEW.qty >= 0;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION
+                'Penyesuaian menyebabkan stok negatif';
+        END IF;
+
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER inventory_stock_trigger
+BEFORE INSERT ON inventory_transactions
+FOR EACH ROW
+EXECUTE FUNCTION trg_update_stock_and_journal();
+
+INSERT INTO inventory_transactions
+    (item_id, trx_type, qty)
+VALUES
+    ('BRG001', 'PURCHASE', 5);
+
+    SELECT item_id, item_name, stock_qty
+FROM inventory_items
+WHERE item_id = 'BRG001';
+
+INSERT INTO inventory_transactions
+    (item_id, trx_type, qty)
+VALUES
+    ('BRG001', 'SALE', 3);
+
+    INSERT INTO inventory_transactions
+    (item_id, trx_type, qty)
+VALUES
+    ('BRG001', 'SALE', 100);
+
+
+2.2 Penanganan Concurrency (Race Condition / Overselling)
+	Anomali Race Condition timbul ketika dua transaksi penjualan eksekusi secara bersamaan pada item dengan stok 1 unit. Tanpa penguncian baris, kedua sesi membaca stock_qty = 1 dan keduanya berhasil melakukan pengurangan stok, mengakibatkan overselling (stok -1).
+Solusi teknis yang digunakan adalah Row-Level Locking melalui perintah SELECT ... FOR UPDATE di dalam fungsi trigger dengan level isolasi READ COMMITTED / SERIALIZABLE. Sesi kedua akan dipaksa menunggu (wait) hingga sesi pertama melakukan COMMIT/ROLLBACK.
+-- Skenario Eksekusi Kasir A (Berhasil):
+BEGIN ISOLATION LEVEL READ COMMITTED;
+
+-- Penguncian baris barang eksklusif
+SELECT item_id, stock_qty FROM inventory_items WHERE item_id = 'ITM-001' FOR UPDATE;
+
+INSERT INTO inventory_transactions (item_id, trx_type, qty)
+VALUES ('ITM-001', 'SALE', 1);
+
+COMMIT; -- Stok terupdate menjadi 0
+
+----------------------------------------------------------------------
+
+-- Skenario Eksekusi Kasir B (Dijalankan Serentak):
+BEGIN ISOLATION LEVEL READ COMMITTED;
+
+-- Kasir B tertahan (WAIT) pada baris ini hingga Kasir A selesai COMMIT
+SELECT item_id, stock_qty FROM inventory_items WHERE item_id = 'ITM-001' FOR UPDATE;
+
+-- Setelah Kasir A COMMIT, Kasir B membaca stock_qty = 0
+-- Perintah INSERT memicu trigger -> RAISE EXCEPTION 'Stok tidak mencukupi'
+INSERT INTO inventory_transactions (item_id, trx_type, qty)
+VALUES ('ITM-001', 'SALE', 1);
+
+ROLLBACK; -- Transaksi Kasir B otomatis dibatalkan
