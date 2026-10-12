@@ -195,6 +195,54 @@
             </div>
         </form>
 
+        <!-- ── Histori Jurnal ────────────────────────────────────── -->
+        <section class="mt-8 bg-surface rounded-xl shadow-lg border border-gray-200 overflow-hidden">
+            <div class="p-6 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
+                <h3 class="text-lg font-semibold text-gray-700">
+                    <i class="fas fa-history mr-2"></i>Histori Jurnal Diposting
+                </h3>
+                <button id="refreshHistoryBtn" class="text-sm text-secondary hover:text-blue-700 flex items-center gap-1 font-medium">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+            </div>
+
+            <div id="historyLoading" class="p-8 text-center text-gray-400 hidden">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                <p class="text-sm">Memuat histori...</p>
+            </div>
+
+            <div id="historyEmpty" class="p-8 text-center text-gray-400 hidden">
+                <i class="fas fa-inbox text-3xl mb-2"></i>
+                <p class="text-sm">Belum ada voucher yang tersimpan.</p>
+            </div>
+
+            <div id="historyTableWrap" class="overflow-x-auto hidden">
+                <table class="w-full text-sm text-left text-gray-600">
+                    <thead class="bg-gray-100 text-gray-700 uppercase font-semibold border-b border-gray-200 text-xs">
+                        <tr>
+                            <th class="px-4 py-3">No. Voucher</th>
+                            <th class="px-4 py-3">Tanggal</th>
+                            <th class="px-4 py-3">Keterangan</th>
+                            <th class="px-4 py-3 text-right">Total (Rp)</th>
+                            <th class="px-4 py-3 text-center">Aksi</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyBody" class="divide-y divide-gray-100 bg-white"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Modal Detail Jurnal -->
+        <div id="detailModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black bg-opacity-40">
+            <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden fade-in">
+                <div class="bg-primary text-white px-6 py-4 flex justify-between items-center">
+                    <h4 class="font-bold text-base"><i class="fas fa-file-alt mr-2"></i>Detail Jurnal</h4>
+                    <button id="closeModalBtn" class="hover:text-blue-200 transition-colors"><i class="fas fa-times text-lg"></i></button>
+                </div>
+                <div id="modalContent" class="p-6 overflow-y-auto max-h-[70vh]"></div>
+            </div>
+        </div>
+
         <footer class="mt-8 text-center text-sm text-gray-500 pb-8">
             <p>&copy; 2026 Sistem Informasi Akuntansi. Purwarupa UI/UX.</p>
             <p class="mt-1 text-xs">Data voucher disimpan ke Supabase.</p>
@@ -530,6 +578,7 @@
                     rowCount = 0;
                     addJournalRow();
                     calculateTotals();
+                    loadHistory(); // refresh histori
 
                 } catch (err) {
                     console.error('Supabase error:', err);
@@ -581,6 +630,141 @@
 
             // Initialize with one empty row
             addJournalRow();
+
+            // ── Histori Jurnal ────────────────────────────────────────────
+            const historyLoading   = document.getElementById('historyLoading');
+            const historyEmpty     = document.getElementById('historyEmpty');
+            const historyTableWrap = document.getElementById('historyTableWrap');
+            const historyBody      = document.getElementById('historyBody');
+            const refreshHistoryBtn= document.getElementById('refreshHistoryBtn');
+            const detailModal      = document.getElementById('detailModal');
+            const modalContent     = document.getElementById('modalContent');
+            const closeModalBtn    = document.getElementById('closeModalBtn');
+
+            const formatDate = (isoDate) => {
+                if (!isoDate) return '-';
+                const [y, m, d] = isoDate.split('-');
+                return `${d}/${m}/${y}`;
+            };
+
+            const loadHistory = async () => {
+                historyLoading.classList.remove('hidden');
+                historyEmpty.classList.add('hidden');
+                historyTableWrap.classList.add('hidden');
+                historyBody.innerHTML = '';
+
+                try {
+                    const { data, error } = await db
+                        .from('voucher_headers')
+                        .select('id, voucher_no, trans_date, description, total_amount, created_at')
+                        .order('created_at', { ascending: false });
+
+                    if (error) throw error;
+
+                    historyLoading.classList.add('hidden');
+
+                    if (!data || data.length === 0) {
+                        historyEmpty.classList.remove('hidden');
+                        return;
+                    }
+
+                    historyTableWrap.classList.remove('hidden');
+
+                    data.forEach(v => {
+                        const tr = document.createElement('tr');
+                        tr.className = 'hover:bg-gray-50 transition-colors';
+                        tr.innerHTML = `
+                            <td class="px-4 py-3 font-medium text-primary">${v.voucher_no}</td>
+                            <td class="px-4 py-3 text-gray-600">${formatDate(v.trans_date)}</td>
+                            <td class="px-4 py-3 text-gray-600 max-w-xs truncate" title="${v.description}">${v.description}</td>
+                            <td class="px-4 py-3 text-right font-semibold text-gray-800">Rp ${formatNumber(v.total_amount)}</td>
+                            <td class="px-4 py-3 text-center">
+                                <button class="text-secondary hover:text-blue-700 text-xs font-medium detail-btn" data-id="${v.id}" data-no="${v.voucher_no}" data-date="${v.trans_date}" data-desc="${v.description}" data-total="${v.total_amount}">
+                                    <i class="fas fa-eye mr-1"></i>Detail
+                                </button>
+                            </td>
+                        `;
+                        historyBody.appendChild(tr);
+                    });
+
+                    // Attach detail button listeners
+                    historyBody.querySelectorAll('.detail-btn').forEach(btn => {
+                        btn.addEventListener('click', () => openDetail(
+                            btn.dataset.id,
+                            btn.dataset.no,
+                            btn.dataset.date,
+                            btn.dataset.desc,
+                            btn.dataset.total
+                        ));
+                    });
+
+                } catch (err) {
+                    historyLoading.classList.add('hidden');
+                    historyEmpty.classList.remove('hidden');
+                    console.error('Load history error:', err);
+                }
+            };
+
+            const openDetail = async (voucherId, voucherNo, transDate, description, totalAmount) => {
+                modalContent.innerHTML = `<div class="text-center text-gray-400 py-8"><i class="fas fa-spinner fa-spin text-2xl"></i></div>`;
+                detailModal.classList.remove('hidden');
+
+                try {
+                    const { data: lines, error } = await db
+                        .from('voucher_lines')
+                        .select('account_id, account_name, debit, credit')
+                        .eq('voucher_id', voucherId)
+                        .order('id');
+
+                    if (error) throw error;
+
+                    const lineRows = lines.map((l, i) => `
+                        <tr class="border-b border-gray-100">
+                            <td class="px-3 py-2 text-center text-gray-500">${i + 1}</td>
+                            <td class="px-3 py-2">[${l.account_id}] ${l.account_name}</td>
+                            <td class="px-3 py-2 text-right">${l.debit > 0 ? 'Rp ' + formatNumber(l.debit) : '-'}</td>
+                            <td class="px-3 py-2 text-right">${l.credit > 0 ? 'Rp ' + formatNumber(l.credit) : '-'}</td>
+                        </tr>
+                    `).join('');
+
+                    modalContent.innerHTML = `
+                        <div class="space-y-4">
+                            <div class="grid grid-cols-2 gap-4 text-sm">
+                                <div><span class="text-gray-500">No. Voucher</span><p class="font-semibold text-gray-800">${voucherNo}</p></div>
+                                <div><span class="text-gray-500">Tanggal</span><p class="font-semibold text-gray-800">${formatDate(transDate)}</p></div>
+                                <div class="col-span-2"><span class="text-gray-500">Keterangan</span><p class="font-semibold text-gray-800">${description}</p></div>
+                            </div>
+                            <table class="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
+                                <thead class="bg-gray-100 text-gray-700 uppercase text-xs font-semibold">
+                                    <tr>
+                                        <th class="px-3 py-2 text-center w-8">#</th>
+                                        <th class="px-3 py-2 text-left">Akun</th>
+                                        <th class="px-3 py-2 text-right">Debit</th>
+                                        <th class="px-3 py-2 text-right">Kredit</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white">${lineRows}</tbody>
+                                <tfoot class="bg-gray-50 font-semibold text-gray-800 border-t-2 border-gray-300">
+                                    <tr>
+                                        <td colspan="2" class="px-3 py-2 text-right">TOTAL</td>
+                                        <td class="px-3 py-2 text-right">Rp ${formatNumber(totalAmount)}</td>
+                                        <td class="px-3 py-2 text-right">Rp ${formatNumber(totalAmount)}</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    `;
+                } catch (err) {
+                    modalContent.innerHTML = `<p class="text-red-500 text-sm">Gagal memuat detail: ${err.message}</p>`;
+                }
+            };
+
+            closeModalBtn.addEventListener('click', () => detailModal.classList.add('hidden'));
+            detailModal.addEventListener('click', (e) => { if (e.target === detailModal) detailModal.classList.add('hidden'); });
+            refreshHistoryBtn.addEventListener('click', loadHistory);
+
+            // Load histori saat halaman pertama dibuka
+            loadHistory();
         });
     </script>
 </body>
